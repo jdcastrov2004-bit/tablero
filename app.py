@@ -35,4 +35,4 @@ with st.sidebar:
     fill_opacity = st.slider("Opacidad del relleno", 0.0, 1.0, 0.3, 0.05)
     show_grid = st.toggle("Fondo con cuadrícula", value=False)
     grid_size = st.slider("Tamaño de celda", 10, 100, 25, 5, disabled=not show_grid)
-    bg_image_file = st.file_uploader("Imagen de fondo (opcional)", type=_
+    bg_image_file = st.file_uploader("Imagen de fondo (opcional)", type=["
