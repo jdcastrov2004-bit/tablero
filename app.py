@@ -1,34 +1,32 @@
 import streamlit as st
 from streamlit_drawable_canvas import st_canvas
-from PIL import Image, ImageDraw
+from PIL import Image
 import json, io
 from datetime import datetime
 
 st.set_page_config(page_title="Tablero para dibujo", page_icon="🎨", layout="centered")
-
 st.title("🎨 Tablero para dibujo")
 
 with st.sidebar:
     st.subheader("⚙️ Propiedades del tablero")
     canvas_width  = st.slider("Ancho del tablero", 300, 700, 500, 50)
     canvas_height = st.slider("Alto del tablero", 200, 600, 300, 50)
-
-    drawing_mode = st.selectbox(
-        "Herramienta de dibujo",
-        ("freedraw", "line", "rect", "circle", "transform", "polygon", "point"),
-    )
-    stroke_width = st.slider("Grosor de línea", 1, 30, 15)
-    stroke_color = st.color_picker("🎨 Color de trazo", "#FFFFFF")
-    bg_color     = st.color_picker("🖼️ Color de fondo (si no hay imagen/cuadrícula)", "#000000")
+    drawing_mode  = st.selectbox("Herramienta de dibujo",
+                                 ("freedraw", "line", "rect", "circle", "transform", "polygon", "point"))
+    stroke_width  = st.slider("Grosor de línea", 1, 30, 15)
+    stroke_color  = st.color_picker("🎨 Color de trazo", "#FFFFFF")
+    bg_color      = st.color_picker("🖼️ Color de fondo", "#000000")
 
     st.divider()
     st.subheader("✨ Opciones nuevas")
-    fill_hex      = st.color_picker("Color de relleno", "#FFA500")
-    fill_opacity  = st.slider("Opacidad del relleno", 0.0, 1.0, 0.3, 0.05)
-    show_grid     = st.toggle("Fondo con cuadrícula", value=False)
-    grid_size     = st.slider("Tamaño de cuadrícula", 10, 100, 25, 5, disabled=not show_grid)
-    bg_image_file = st.file_uploader("📸 Imagen de fondo (opcional)", type=["png", "jpg", "jpeg"])
-    show_handles  = st.toggle("Mostrar controladores de forma", value=True)
+    fill_hex     = st.color_picker("Color de relleno", "#FFA500")
+    fill_opacity = st.slider("Opacidad del relleno", 0.0, 1.0, 0.3, 0.05)
+    show_grid    = st.toggle("Fondo con cuadrícula", value=False)
+    grid_size    = st.slider("Tamaño de cuadrícula", 10, 100, 25, 5, disabled=not show_grid)
+    # NOTA: mantenemos el cargador por si quieres usarlo luego, pero no lo pasamos como background_image
+    bg_image_file = st.file_uploader("📸 Imagen de fondo (opcional, no usada en esta versión por compatibilidad)",
+                                     type=["png", "jpg", "jpeg"])
+    show_handles = st.toggle("Mostrar controladores de forma", value=True)
 
     st.divider()
     if "clear_seed" not in st.session_state:
@@ -40,45 +38,59 @@ with st.sidebar:
     show_json    = st.checkbox("📁 Ver/descargar JSON", value=False)
     load_json    = st.file_uploader("📂 Cargar archivo JSON", type=["json"])
 
-initial_json = None
+# Cargar anotaciones si vienen de JSON
+base_json = None
 if load_json is not None:
     try:
-        initial_json = json.load(load_json)
+        base_json = json.load(load_json)
     except Exception:
         st.warning("⚠️ No se pudo leer el archivo JSON. Verifica su formato.")
 
-def rgba_from_hex(hex_color: str, alpha: float) -> str:
-    hex_color = hex_color.lstrip("#")
-    r = int(hex_color[0:2], 16)
-    g = int(hex_color[2:4], 16)
-    b = int(hex_color[4:6], 16)
-    return f"rgba({r},{g},{b},{alpha:.3f})"
+# Construir la cuadrícula como objetos Fabric (sin usar background_image)
+def make_grid_json(w: int, h: int, step: int, stroke="#282828"):
+    objects = []
+    # Líneas verticales
+    for x in range(0, w, step):
+        objects.append({
+            "type": "line",
+            "x1": x, "y1": 0, "x2": x, "y2": h,
+            "stroke": stroke,
+            "strokeWidth": 1,
+            "selectable": False,
+            "evented": False,
+            "excludeFromExport": True
+        })
+    # Líneas horizontales
+    for y in range(0, h, step):
+        objects.append({
+            "type": "line",
+            "x1": 0, "y1": y, "x2": w, "y2": y,
+            "stroke": stroke,
+            "strokeWidth": 1,
+            "selectable": False,
+            "evented": False,
+            "excludeFromExport": True
+        })
+    return {"version": "4.6.0", "objects": objects}
 
-# >>> CLAVE: usar PIL.Image para el fondo (cuadrícula o imagen), no arrays de NumPy <<<
-background_pil = None
+grid_json = make_grid_json(canvas_width, canvas_height, grid_size) if show_grid else {"version": "4.6.0", "objects": []}
 
-if show_grid:
-    grid = Image.new("RGB", (canvas_width, canvas_height), color=(0, 0, 0))
-    draw = ImageDraw.Draw(grid)
-    for x in range(0, canvas_width, grid_size):
-        draw.line([(x, 0), (x, canvas_height)], fill=(40, 40, 40))
-    for y in range(0, canvas_height, grid_size):
-        draw.line([(0, y), (canvas_width, y)], fill=(40, 40, 40))
-    background_pil = grid  # PIL.Image
-elif bg_image_file is not None:
-    try:
-        img = Image.open(bg_image_file).convert("RGB")
-        background_pil = img.resize((canvas_width, canvas_height))  # PIL.Image redimensionada
-    except Exception as e:
-        st.warning(f"No se pudo usar la imagen de fondo: {e}")
-        background_pil = None
+# Fusionar: cuadrícula (primero) + lo que el usuario cargue (si hay)
+def merge_fabric_json(a, b):
+    if a is None and b is None: return None
+    if a is None: return b
+    if b is None: return a
+    return {"version": b.get("version", "4.6.0"), "objects": (a.get("objects", []) + b.get("objects", []))}
 
+initial_json = merge_fabric_json(grid_json, base_json)
+
+# st_canvas SIN background_image (para evitar el crash)
 canvas_result = st_canvas(
-    fill_color=rgba_from_hex(fill_hex, fill_opacity),
+    fill_color=f"rgba({int(fill_hex[1:3],16)},{int(fill_hex[3:5],16)},{int(fill_hex[5:7],16)},{fill_opacity:.3f})",
     stroke_width=stroke_width,
     stroke_color=stroke_color,
-    background_color=None if background_pil is not None else bg_color,
-    background_image=background_pil,  # ← ahora es PIL.Image y no falla
+    background_color=bg_color,
+    background_image=None,                 # ← clave: no usar background_image
     height=canvas_height,
     width=canvas_width,
     drawing_mode=drawing_mode,
@@ -87,11 +99,15 @@ canvas_result = st_canvas(
     key=f"canvas_{canvas_width}_{canvas_height}_{st.session_state.clear_seed}",
 )
 
+# Exportar PNG / JSON
+import io
+from PIL import Image as PILImage
+from datetime import datetime
+
 col_a, col_b = st.columns(2)
 
 with col_a:
     if download_png and canvas_result.image_data is not None:
-        from PIL import Image as PILImage
         pil_img = PILImage.fromarray(canvas_result.image_data.astype("uint8"))
         buf = io.BytesIO()
         pil_img.save(buf, format="PNG")
@@ -110,4 +126,4 @@ with col_b:
             mime="application/json",
         )
 
-st.caption("💡 Si vuelves a ver errores, asegúrate de no pasar arrays NumPy como fondo. Esta versión usa PIL de forma segura.")
+st.caption("✅ La cuadrícula ahora se dibuja como líneas bloqueadas dentro del lienzo (sin background_image), así que no volverá a fallar.")
